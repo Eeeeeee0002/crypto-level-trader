@@ -35,6 +35,8 @@ class Trader:
         self.journal = Journal(config.logging.trade_log, config.logging.equity_log)
         self.state: dict[str, SymbolState] = {}
         self.symbols: list[str] = []
+        self._peak_equity: float = float(broker.equity())
+        self._kill_switch: bool = False
 
     # -- Bootstrapping -----------------------------------------------------
 
@@ -103,9 +105,15 @@ class Trader:
         if bar_index - st.last_trade_close_bar < self.config.signals.cooldown_bars:
             return None
 
-        return generate_signal(symbol, exec_df, ctx_df, lv, self.config.signals)
+        return generate_signal(
+            symbol, exec_df, ctx_df, lv, self.config.signals, risk=self.config.risk
+        )
 
     def _maybe_open(self, signal: Signal) -> None:
+        # Max drawdown kill switch.
+        if self._kill_switch:
+            log.info("Kill switch engaged (max drawdown); ignoring %s", signal.symbol)
+            return
         # Capacity check.
         if len(self.broker.open_positions()) >= self.config.risk.max_concurrent_positions:
             log.info("Max concurrent positions reached; skipping signal on %s", signal.symbol)
@@ -165,6 +173,22 @@ class Trader:
 
     def step(self) -> None:
         self._price_tick()
+        # Track peak equity and engage the kill switch once configured drawdown is hit.
+        eq = self.broker.equity()
+        if eq > self._peak_equity:
+            self._peak_equity = eq
+        max_dd = self.config.risk.max_drawdown_pct
+        if max_dd > 0 and self._peak_equity > 0:
+            dd = (self._peak_equity - eq) / self._peak_equity
+            if dd >= max_dd and not self._kill_switch:
+                self._kill_switch = True
+                log.warning(
+                    "KILL SWITCH engaged: drawdown %.2f%% >= %.2f%% (peak=%.2f, now=%.2f)",
+                    dd * 100,
+                    max_dd * 100,
+                    self._peak_equity,
+                    eq,
+                )
         for s in self.symbols:
             sig = self._process_symbol(s)
             if sig is not None:

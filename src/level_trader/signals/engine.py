@@ -8,7 +8,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from ..config import SignalsConfig
+from ..config import RiskConfig, SignalsConfig
 from ..levels.detector import Level, nearest_levels
 
 Side = Literal["long", "short"]
@@ -30,6 +30,28 @@ class Signal:
 
 def _ema(series: pd.Series, period: int) -> pd.Series:
     return series.ewm(span=period, adjust=False).mean()
+
+
+def atr(df: pd.DataFrame, period: int) -> float:
+    """Average True Range over `period` bars of `df` (returns the latest value).
+
+    Returns 0.0 when the dataframe is too short to compute ATR.
+    """
+    if len(df) < period + 1:
+        return 0.0
+    high = df["high"].to_numpy()
+    low = df["low"].to_numpy()
+    close = df["close"].to_numpy()
+    prev_close = np.concatenate(([close[0]], close[:-1]))
+    tr = np.maximum.reduce(
+        [
+            high - low,
+            np.abs(high - prev_close),
+            np.abs(low - prev_close),
+        ]
+    )
+    # Wilder's smoothing approximated with simple rolling mean of the last `period` bars.
+    return float(pd.Series(tr).rolling(period).mean().iloc[-1])
 
 
 def _is_bullish_confirmation(df: pd.DataFrame) -> bool:
@@ -98,10 +120,10 @@ def _trend_bias(context_df: pd.DataFrame, period: int) -> Side | None:
 
 
 def _compute_tp(
-    entry: float, stop: float, side: Side, levels: list[Level], cfg_tp_mode: str, cfg_tp_rr: float
+    entry: float, stop: float, side: Side, levels: list[Level], tp_mode: str, tp_rr: float
 ) -> float:
-    rr_target = entry + cfg_tp_rr * (entry - stop) if side == "long" else entry - cfg_tp_rr * (stop - entry)
-    if cfg_tp_mode == "rr":
+    rr_target = entry + tp_rr * (entry - stop) if side == "long" else entry - tp_rr * (stop - entry)
+    if tp_mode == "rr":
         return rr_target
 
     # next opposing level
@@ -112,12 +134,35 @@ def _compute_tp(
         candidates = [lv.price for lv in levels if lv.price < entry]
         next_level = max(candidates) if candidates else rr_target
 
-    if cfg_tp_mode == "next_level":
+    if tp_mode == "next_level":
         return next_level
     # rr_or_next_level -> the closer of the two (more conservative)
     if side == "long":
         return min(rr_target, next_level)
     return max(rr_target, next_level)
+
+
+def _stop_from_level(
+    *,
+    side: Side,
+    level_price: float,
+    atr_value: float,
+    approach_pct: float,
+    buffer_pct: float,
+    atr_stop_mult: float,
+) -> float:
+    """Compute an SL price beyond the given level.
+
+    Uses an ATR-multiple offset when `atr_stop_mult > 0` and ATR is available;
+    otherwise falls back to a configurable percent buffer. `approach_pct`
+    acts as a lower bound so stops are never tighter than our approach band.
+    """
+    pct_offset = max(buffer_pct, approach_pct)
+    atr_offset = (atr_stop_mult * atr_value / level_price) if (atr_stop_mult > 0 and atr_value > 0) else 0.0
+    offset = max(pct_offset, atr_offset)
+    if side == "long":
+        return level_price * (1 - offset)
+    return level_price * (1 + offset)
 
 
 def generate_signal(
@@ -126,6 +171,7 @@ def generate_signal(
     context_df: pd.DataFrame,
     levels: list[Level],
     cfg: SignalsConfig,
+    risk: RiskConfig | None = None,
 ) -> Signal | None:
     """Return a `Signal` if current market state matches a level-trading setup, else None.
 
@@ -140,11 +186,24 @@ def generate_signal(
     high = float(last["high"])
     low = float(last["low"])
 
+    # Volatility gate -------------------------------------------------------
+    atr_value = atr(exec_df, cfg.atr_period) if (cfg.atr_stop_mult > 0 or cfg.min_atr_pct > 0 or cfg.max_atr_pct > 0) else 0.0
+    if close > 0 and atr_value > 0:
+        atr_pct = atr_value / close
+        if cfg.min_atr_pct > 0 and atr_pct < cfg.min_atr_pct:
+            return None
+        if cfg.max_atr_pct > 0 and atr_pct > cfg.max_atr_pct:
+            return None
+
     trend: Side | None = None
     if cfg.use_trend_filter:
         trend = _trend_bias(context_df, cfg.trend_ema)
 
     support, resistance = nearest_levels(close, levels)
+
+    buffer_pct = risk.sl_buffer_pct if risk is not None else 0.001
+    tp_mode = risk.tp_mode if risk is not None else "rr_or_next_level"
+    tp_rr = risk.tp_rr if risk is not None else max(cfg.min_rr * 1.25, cfg.min_rr)
 
     # ---------- Reversal from support (long) ----------
     if support is not None:
@@ -155,8 +214,15 @@ def generate_signal(
         confirmed = (not cfg.require_confirmation) or _is_bullish_confirmation(exec_df)
         trend_ok = trend != "short"
         if approached and held and confirmed and trend_ok:
-            stop = support.price * (1 - max(cfg.approach_pct, 0.001))
-            tp = _compute_tp(close, stop, "long", levels, "rr_or_next_level", cfg.min_rr * 1.25)
+            stop = _stop_from_level(
+                side="long",
+                level_price=support.price,
+                atr_value=atr_value,
+                approach_pct=cfg.approach_pct,
+                buffer_pct=buffer_pct,
+                atr_stop_mult=cfg.atr_stop_mult,
+            )
+            tp = _compute_tp(close, stop, "long", levels, tp_mode, tp_rr)
             rr = (tp - close) / max(close - stop, 1e-9)
             if rr >= cfg.min_rr:
                 return Signal(
@@ -180,8 +246,15 @@ def generate_signal(
         confirmed = (not cfg.require_confirmation) or _is_bearish_confirmation(exec_df)
         trend_ok = trend != "long"
         if approached and held and confirmed and trend_ok:
-            stop = resistance.price * (1 + max(cfg.approach_pct, 0.001))
-            tp = _compute_tp(close, stop, "short", levels, "rr_or_next_level", cfg.min_rr * 1.25)
+            stop = _stop_from_level(
+                side="short",
+                level_price=resistance.price,
+                atr_value=atr_value,
+                approach_pct=cfg.approach_pct,
+                buffer_pct=buffer_pct,
+                atr_stop_mult=cfg.atr_stop_mult,
+            )
+            tp = _compute_tp(close, stop, "short", levels, tp_mode, tp_rr)
             rr = (close - tp) / max(stop - close, 1e-9)
             if rr >= cfg.min_rr:
                 return Signal(
@@ -202,8 +275,15 @@ def generate_signal(
         retested = low <= resistance.price * (1 + cfg.approach_pct) and close > resistance.price
         confirmed = (not cfg.require_confirmation) or _is_bullish_confirmation(exec_df)
         if retested and confirmed and trend != "short":
-            stop = resistance.price * (1 - cfg.approach_pct)
-            tp = _compute_tp(close, stop, "long", levels, "rr_or_next_level", cfg.min_rr * 1.25)
+            stop = _stop_from_level(
+                side="long",
+                level_price=resistance.price,
+                atr_value=atr_value,
+                approach_pct=cfg.approach_pct,
+                buffer_pct=buffer_pct,
+                atr_stop_mult=cfg.atr_stop_mult,
+            )
+            tp = _compute_tp(close, stop, "long", levels, tp_mode, tp_rr)
             rr = (tp - close) / max(close - stop, 1e-9)
             if rr >= cfg.min_rr:
                 return Signal(
@@ -222,8 +302,15 @@ def generate_signal(
         retested = high >= support.price * (1 - cfg.approach_pct) and close < support.price
         confirmed = (not cfg.require_confirmation) or _is_bearish_confirmation(exec_df)
         if retested and confirmed and trend != "long":
-            stop = support.price * (1 + cfg.approach_pct)
-            tp = _compute_tp(close, stop, "short", levels, "rr_or_next_level", cfg.min_rr * 1.25)
+            stop = _stop_from_level(
+                side="short",
+                level_price=support.price,
+                atr_value=atr_value,
+                approach_pct=cfg.approach_pct,
+                buffer_pct=buffer_pct,
+                atr_stop_mult=cfg.atr_stop_mult,
+            )
+            tp = _compute_tp(close, stop, "short", levels, tp_mode, tp_rr)
             rr = (close - tp) / max(stop - close, 1e-9)
             if rr >= cfg.min_rr:
                 return Signal(
@@ -245,10 +332,9 @@ def generate_signal(
 __all__ = [
     "Signal",
     "generate_signal",
+    "atr",
     "_is_bullish_confirmation",
     "_is_bearish_confirmation",
     "_trend_bias",
+    "_stop_from_level",
 ]
-
-# Silence unused numpy import if the file is linted in isolation.
-_ = np

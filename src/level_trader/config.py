@@ -46,6 +46,14 @@ class SignalsConfig(BaseModel):
     trend_ema: int = 200
     min_rr: float = 2.0
     cooldown_bars: int = 3
+    # ATR-based stop placement. When > 0, SL is placed `atr_stop_mult * ATR`
+    # beyond the level instead of a flat percentage. Falls back to pct when
+    # ATR is unavailable.
+    atr_period: int = 14
+    atr_stop_mult: float = 0.0
+    # Volatility gate: skip signals when ATR/price falls outside this band.
+    min_atr_pct: float = 0.0   # 0 disables lower bound
+    max_atr_pct: float = 0.0   # 0 disables upper bound
 
 
 class RiskConfig(BaseModel):
@@ -56,6 +64,19 @@ class RiskConfig(BaseModel):
     sl_buffer_pct: float = 0.001
     tp_mode: Literal["rr", "next_level", "rr_or_next_level"] = "rr_or_next_level"
     tp_rr: float = 2.5
+    # Trade management: move stop to breakeven once price has travelled
+    # `breakeven_at_r` multiples of the initial risk in our favour.
+    breakeven_at_r: float = 0.0      # 0 disables
+    # Trail stop at `trail_r` R behind the highest favourable price after
+    # move-to-breakeven has triggered.
+    trail_r: float = 0.0             # 0 disables trailing
+    # Partial take-profit: close `partial_tp_frac` of the position at
+    # `partial_tp_r` R. 0 disables.
+    partial_tp_frac: float = 0.0
+    partial_tp_r: float = 1.0
+    # Max drawdown kill-switch: halt new entries once equity drops this
+    # fraction from the peak observed equity.
+    max_drawdown_pct: float = 0.0    # 0 disables
 
 
 class BrokerConfig(BaseModel):
