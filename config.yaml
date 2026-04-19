@@ -1,0 +1,75 @@
+# Default configuration for the level-trader agent.
+# Everything here can be overridden from the CLI via --config <path>.
+
+exchange:
+  name: gate             # only 'gate' implemented for now; anything ccxt-supported can be added
+  market: swap           # gate USDT-M perpetual futures
+  quote: USDT
+
+universe:
+  # How to pick which symbols to trade.
+  # mode=top_volume -> auto-pick top N swap pairs by 24h quote volume.
+  # mode=fixed      -> use the explicit list under `symbols`.
+  mode: top_volume
+  size: 10
+  symbols: []            # only used when mode=fixed, e.g. ["BTC/USDT:USDT", "ETH/USDT:USDT"]
+  # Exclude "weird" pairs. These substrings get filtered out.
+  exclude_contains: ["UP/", "DOWN/", "BEAR/", "BULL/", "3L", "3S", "5L", "5S"]
+
+timeframes:
+  execution: "1h"        # entry timeframe
+  context:   "4h"        # higher timeframe used for trend/level context
+  lookback_bars: 500     # how many bars of history to keep per symbol
+
+levels:
+  # Swing point detection. A pivot high/low requires `pivot_lookback` bars
+  # on each side being lower/higher than the candidate.
+  pivot_lookback: 5
+  # Cluster swings that are within this % of each other into one level.
+  cluster_pct: 0.004     # 0.4%
+  # Minimum number of touches required for a level to be tradeable.
+  min_touches: 2
+  # Level "strength" weights (sum used as ranking score).
+  weight_touches: 1.0
+  weight_volume: 0.5
+  weight_htf: 1.5        # bonus if same level appears on context timeframe
+  # Drop levels older than this many bars.
+  max_age_bars: 300
+
+signals:
+  # How close price has to get to a level (in %) to consider an interaction.
+  approach_pct: 0.0025   # 0.25%
+  # How far price has to close beyond the level to call it a breakout (in %).
+  breakout_pct: 0.0015   # 0.15%
+  # Candle confirmation: require a pin / engulfing / strong close candle.
+  require_confirmation: true
+  # Trend filter using EMA on context timeframe.
+  use_trend_filter: true
+  trend_ema: 200
+  # Minimum reward:risk ratio to take a trade.
+  min_rr: 2.0
+  # Cooldown bars after a trade closes on the same symbol before taking a new one.
+  cooldown_bars: 3
+
+risk:
+  account_equity: 10000.0  # starting paper equity in USDT
+  risk_per_trade: 0.01     # 1% of equity at stop
+  leverage: 3
+  max_concurrent_positions: 4
+  # SL placed a small buffer beyond the level so wicks don't insta-stop us.
+  sl_buffer_pct: 0.001     # 0.1%
+  # Take profit: either fixed RR multiple or target the next opposing level, whichever is closer.
+  tp_mode: "rr_or_next_level"   # one of: rr, next_level, rr_or_next_level
+  tp_rr: 2.5
+
+broker:
+  mode: paper            # paper | live
+  taker_fee: 0.0005      # 0.05% Gate futures taker fee
+  slippage_pct: 0.0005   # 0.05% slippage model
+  # Poll interval (seconds) for the main loop.
+  poll_seconds: 30
+
+logging:
+  level: INFO
+  trade_log: "runs/trades.jsonl"
+  equity_log: "runs/equity.jsonl"
