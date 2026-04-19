@@ -50,7 +50,7 @@ def _build_broker(cfg: Config, exchange: GateFutures, want_live: bool) -> Broker
         from .broker.live import LiveGateBroker
 
         return LiveGateBroker(exchange, cfg.broker, leverage=cfg.risk.leverage)
-    return PaperBroker(starting_equity=cfg.risk.account_equity, cfg=cfg.broker)
+    return PaperBroker(starting_equity=cfg.risk.account_equity, cfg=cfg.broker, risk=cfg.risk)
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -103,6 +103,70 @@ def _cmd_universe(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_backtest(args: argparse.Namespace) -> int:
+    """Backtest the strategy on historical bars fetched from the exchange."""
+    from .backtest import aggregate, backtest_symbol
+
+    cfg = Config.load(args.config)
+    _setup_logging(cfg.logging.level)
+    exchange = _build_exchange(cfg, want_live=False)
+
+    if args.symbol:
+        symbols = [args.symbol]
+    else:
+        symbols = select_universe(exchange, cfg.universe)
+
+    # How many execution-TF bars to request (warmup + evaluation window).
+    exec_limit = max(args.bars, cfg.timeframes.lookback_bars)
+    ctx_limit = max(args.bars // 2, 200)
+
+    results = []
+    table = Table(title=f"Backtest ({cfg.timeframes.execution}/{cfg.timeframes.context})")
+    table.add_column("symbol")
+    table.add_column("trades", justify="right")
+    table.add_column("winrate", justify="right")
+    table.add_column("PF", justify="right")
+    table.add_column("PnL", justify="right")
+    table.add_column("max DD", justify="right")
+    table.add_column("final eq", justify="right")
+
+    for s in symbols:
+        try:
+            ex_rows = exchange.fetch_ohlcv(s, cfg.timeframes.execution, limit=exec_limit)
+            ctx_rows = exchange.fetch_ohlcv(s, cfg.timeframes.context, limit=ctx_limit)
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[yellow]OHLCV fetch failed for {s}: {e}[/yellow]")
+            continue
+        try:
+            r = backtest_symbol(s, ex_rows, ctx_rows, cfg, warmup_bars=args.warmup)
+        except ValueError as e:
+            console.print(f"[yellow]{s}: {e}[/yellow]")
+            continue
+        results.append(r)
+        pf = f"{r.profit_factor:.2f}" if r.profit_factor != float("inf") else "∞"
+        table.add_row(
+            s,
+            str(r.trades),
+            f"{r.winrate*100:.1f}%",
+            pf,
+            f"{r.total_pnl:+.2f}",
+            f"{r.max_drawdown*100:.2f}%",
+            f"{r.final_equity:.2f}",
+        )
+
+    console.print(table)
+    console.print("Aggregate:", aggregate(results))
+
+    if args.out:
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            json.dumps([r.to_dict() for r in results], indent=2, default=str)
+        )
+        console.print(f"Wrote per-symbol results to {out_path}")
+    return 0
+
+
 def _cmd_report(args: argparse.Namespace) -> int:
     path = Path(args.trade_log)
     if not path.exists():
@@ -147,6 +211,13 @@ def main(argv: list[str] | None = None) -> int:
     p_r = sub.add_parser("report", help="summarize a run from the trade log")
     p_r.add_argument("--trade-log", default="runs/trades.jsonl")
     p_r.set_defaults(func=_cmd_report)
+
+    p_b = sub.add_parser("backtest", help="backtest the strategy on historical bars")
+    p_b.add_argument("--symbol", default=None, help="one symbol (default: full universe)")
+    p_b.add_argument("--bars", type=int, default=1500, help="execution-TF bars to fetch")
+    p_b.add_argument("--warmup", type=int, default=250, help="bars used only to seed indicators")
+    p_b.add_argument("--out", default=None, help="optional path to dump per-symbol JSON results")
+    p_b.set_defaults(func=_cmd_backtest)
 
     args = parser.parse_args(argv)
     return args.func(args)

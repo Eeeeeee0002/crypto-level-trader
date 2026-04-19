@@ -50,6 +50,14 @@ signals:
   min_rr: 2.0
   # Cooldown bars after a trade closes on the same symbol before taking a new one.
   cooldown_bars: 3
+  # --- Volatility-aware stop placement (optional) ---
+  # When atr_stop_mult > 0, SL is placed max(sl_buffer_pct, atr_stop_mult*ATR/level)
+  # beyond the level. Leave 0 to keep the simple percent stop.
+  atr_period: 14
+  atr_stop_mult: 0.0
+  # Skip entries when ATR/price is outside this band. Both 0 = no filter.
+  min_atr_pct: 0.0
+  max_atr_pct: 0.0
 
 risk:
   account_equity: 10000.0  # starting paper equity in USDT
@@ -61,6 +69,18 @@ risk:
   # Take profit: either fixed RR multiple or target the next opposing level, whichever is closer.
   tp_mode: "rr_or_next_level"   # one of: rr, next_level, rr_or_next_level
   tp_rr: 2.5
+  # --- Trade management (optional; 0 disables each) ---
+  # Move stop to entry once price is `breakeven_at_r` R in our favour.
+  breakeven_at_r: 1.0
+  # After BE has triggered, trail the stop `trail_r` R behind the highest
+  # favourable excursion.
+  trail_r: 1.5
+  # Partial take-profit: close `partial_tp_frac` of the initial quantity
+  # at `partial_tp_r` R. Remaining runs to TP (or trails).
+  partial_tp_frac: 0.5
+  partial_tp_r: 1.0
+  # Kill switch: halt new entries once equity drops this fraction from peak.
+  max_drawdown_pct: 0.15   # 15%
 
 broker:
   mode: paper            # paper | live

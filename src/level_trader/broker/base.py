@@ -25,6 +25,15 @@ class Position:
     closed_at: float | None = None
     realized_pnl: float = 0.0
     fees_paid: float = 0.0
+    # Trade-management state. `initial_risk` is |entry - stop| captured at open
+    # and is used by the broker to express partial-TP / breakeven / trailing
+    # distances in R multiples. `peak_favorable` tracks the best price reached
+    # in our direction.
+    initial_risk: float = 0.0
+    initial_quantity: float = 0.0
+    peak_favorable: float = 0.0
+    be_moved: bool = False
+    partial_filled: bool = False
     meta: dict = field(default_factory=dict)
 
 

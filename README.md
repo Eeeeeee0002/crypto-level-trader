@@ -10,9 +10,11 @@ A disciplined crypto trading agent that trades off horizontal support/resistance
    - **Reversal** from support/resistance (wick tags the level and closes back inside) with a pin-bar or engulfing confirmation and an EMA-200 HTF trend filter.
    - **Breakout + retest** of a level with confirmation.
    Only signals meeting the minimum reward:risk ratio (default 2:1) are accepted.
-4. **Risk sizing** — fixed fractional risk per trade (default 1% of equity) with a leverage cap (default 3x). Stop-loss sits a small buffer beyond the level; take-profit is the closer of a fixed RR target or the next opposing level.
-5. **Execution** — a paper broker tracks open positions, applies slippage + taker fees, and auto-closes when live price hits SL/TP. A `LiveGateBroker` is available for real orders (requires API keys and `--live`).
-6. **Journaling** — every trade is appended to `runs/trades.jsonl`; equity is sampled into `runs/equity.jsonl`. `level-trader report` prints winrate, profit factor, avg win/loss, etc.
+4. **Risk sizing** — fixed fractional risk per trade (default 1% of equity) with a leverage cap (default 3x). Stop-loss sits a small buffer beyond the level (optionally scaled by ATR); take-profit is the closer of a fixed RR target or the next opposing level.
+5. **Trade management** — optional breakeven-move, trailing stop, and partial take-profit, all expressed in R multiples of the initial stop distance. A max-drawdown kill-switch halts new entries after a configurable equity drawdown from the peak.
+6. **Execution** — a paper broker tracks open positions, applies slippage + taker fees, and auto-closes when live price hits SL/TP (or the trailing stop). A `LiveGateBroker` is available for real orders (requires API keys and `--live`).
+7. **Backtester** — `level-trader backtest` replays historical bars through the same signal engine and paper broker to produce winrate, PF, max drawdown, and final equity per symbol.
+8. **Journaling** — every trade is appended to `runs/trades.jsonl`; equity is sampled into `runs/equity.jsonl`. `level-trader report` prints winrate, profit factor, avg win/loss, etc.
 
 ## Quickstart (paper mode, real market)
 
@@ -20,9 +22,12 @@ A disciplined crypto trading agent that trades off horizontal support/resistance
 uv sync
 uv run level-trader --config config.yaml universe         # show auto-picked top-10
 uv run level-trader --config config.yaml levels           # detected levels per symbol
+uv run level-trader --config config.yaml backtest         # replay history; winrate, PF, DD
 uv run level-trader --config config.yaml run              # start paper trading loop
 uv run level-trader --config config.yaml report           # summarize runs/trades.jsonl
 ```
+
+The backtester supports `--symbol BTC/USDT:USDT`, `--bars 2000`, and `--out results.json` to persist per-symbol metrics.
 
 To stop early for a bounded test run, use `--iterations N`.
 
@@ -50,7 +55,10 @@ All parameters live in `config.yaml` and are documented inline. Key knobs:
 - `timeframes.execution` / `timeframes.context` — entry and HTF timeframes.
 - `levels.pivot_lookback`, `levels.min_touches`, `levels.cluster_pct` — how picky the level detector is.
 - `signals.min_rr` — minimum reward:risk to take a trade.
+- `signals.atr_stop_mult`, `signals.min_atr_pct`, `signals.max_atr_pct` — volatility-aware stop placement and vol-filter.
 - `risk.risk_per_trade`, `risk.leverage`, `risk.max_concurrent_positions` — risk caps.
+- `risk.breakeven_at_r`, `risk.trail_r`, `risk.partial_tp_frac`/`partial_tp_r` — trade management.
+- `risk.max_drawdown_pct` — halt entries after X% drawdown from peak equity.
 - `broker.taker_fee`, `broker.slippage_pct` — paper-fill realism.
 
 ## Project layout
