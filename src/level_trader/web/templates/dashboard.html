@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ title }}</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #0b0d10;
+            --panel: #141820;
+            --panel-2: #1b2028;
+            --fg: #e6e8eb;
+            --muted: #8a93a0;
+            --accent: #4ade80;
+            --red: #f87171;
+            --yellow: #fbbf24;
+            --blue: #60a5fa;
+            --border: #23293349;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--fg);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+            font-size: 14px;
+        }
+        header {
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        header h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: 0.02em; }
+        header .sub { color: var(--muted); font-size: 12px; }
+        .grid {
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            gap: 16px;
+            padding: 16px;
+        }
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .panel h2 {
+            margin: 0;
+            padding: 10px 14px;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+            border-bottom: 1px solid var(--border);
+            background: var(--panel-2);
+        }
+        .panel .body { padding: 12px 14px; }
+        table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+        th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+        th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+        tr:hover td { background: #1a2029; }
+        td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+        .universe-list { list-style: none; margin: 0; padding: 0; }
+        .universe-list li {
+            padding: 6px 14px;
+            cursor: pointer;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .universe-list li:hover { background: #1a2029; }
+        .universe-list li.active { background: #2a3140; color: var(--accent); }
+        .tag { padding: 2px 6px; border-radius: 4px; font-size: 11px; background: #232a33; color: var(--muted); }
+        .tag.support { background: #0e3a22; color: var(--accent); }
+        .tag.resistance { background: #3a1a14; color: var(--red); }
+        .tag.both { background: #2c2b14; color: var(--yellow); }
+        .tag.htf { background: #14283a; color: var(--blue); }
+        .signal-row { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+        .signal-row:last-child { border-bottom: none; }
+        .signal-row.long { border-left: 3px solid var(--accent); }
+        .signal-row.short { border-left: 3px solid var(--red); }
+        .row-right { display: flex; gap: 16px; align-items: center; }
+        .muted { color: var(--muted); }
+        .ok { color: var(--accent); }
+        .bad { color: var(--red); }
+        .empty { padding: 16px; color: var(--muted); text-align: center; font-size: 13px; }
+        a { color: var(--blue); }
+        .stats { display: flex; gap: 24px; flex-wrap: wrap; padding: 12px 14px; }
+        .stat { display: flex; flex-direction: column; }
+        .stat .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+        .stat .value { font-size: 20px; font-weight: 600; margin-top: 4px; }
+        .loading { color: var(--muted); font-size: 12px; }
+        code { background: #1a2029; padding: 1px 6px; border-radius: 4px; font-family: ui-monospace, Menlo, Monaco, monospace; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <header>
+        <div>
+            <h1>crypto-level-trader</h1>
+            <div class="sub">Gate.io USDT futures &middot; paper mode &middot; top-N by 24h volume &middot; auto-refresh every 30s</div>
+        </div>
+        <div class="sub" id="updated-at">loading...</div>
+    </header>
+
+    <div class="grid">
+        <div>
+            <div class="panel">
+                <h2>Universe</h2>
+                <ul class="universe-list" id="universe"><li class="loading">loading universe…</li></ul>
+            </div>
+
+            <div class="panel" style="margin-top: 16px;">
+                <h2>Paper equity</h2>
+                <div class="stats" id="equity-stats">
+                    <div class="stat"><div class="label">Current</div><div class="value" id="equity-value">—</div></div>
+                    <div class="stat"><div class="label">Trades</div><div class="value" id="trade-count">—</div></div>
+                    <div class="stat"><div class="label">Winrate</div><div class="value" id="winrate">—</div></div>
+                </div>
+            </div>
+        </div>
+
+        <div>
+            <div class="panel">
+                <h2>Active signals (across universe)</h2>
+                <div id="signals"><div class="empty loading">scanning…</div></div>
+            </div>
+
+            <div class="panel" style="margin-top: 16px;">
+                <h2 id="levels-title">Detected levels</h2>
+                <div id="levels"><div class="empty loading">pick a symbol on the left…</div></div>
+            </div>
+
+            <div class="panel" style="margin-top: 16px;">
+                <h2>Recent paper trades</h2>
+                <div id="trades"><div class="empty">no trades logged yet (run <code>level-trader run</code> to populate)</div></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const fmt = (n, d = 6) => {
+            if (n === null || n === undefined || Number.isNaN(n)) return '—';
+            const abs = Math.abs(n);
+            if (abs >= 1000) return n.toFixed(2);
+            if (abs >= 1) return n.toFixed(4);
+            return n.toPrecision(d);
+        };
+        const fmtPct = (n) => (n === null || n === undefined) ? '—' : (n * 100).toFixed(1) + '%';
+
+        let selected = null;
+
+        async function load(url) {
+            const r = await fetch(url);
+            if (!r.ok) throw new Error(`${url}: ${r.status}`);
+            return r.json();
+        }
+
+        function renderUniverse(symbols) {
+            const el = document.getElementById('universe');
+            el.innerHTML = '';
+            for (const s of symbols) {
+                const li = document.createElement('li');
+                li.textContent = s;
+                if (s === selected) li.className = 'active';
+                li.onclick = () => { selected = s; renderUniverse(symbols); refreshLevels(s); };
+                el.appendChild(li);
+            }
+            if (!selected && symbols.length) { selected = symbols[0]; }
+        }
+
+        function renderSignals(signals) {
+            const el = document.getElementById('signals');
+            if (!signals || !signals.length) {
+                el.innerHTML = '<div class="empty">no active signals this tick — waiting for a level interaction</div>';
+                return;
+            }
+            el.innerHTML = '';
+            for (const s of signals) {
+                const row = document.createElement('div');
+                row.className = `signal-row ${s.side}`;
+                row.innerHTML = `
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div>
+                            <strong>${s.symbol}</strong>
+                            <span class="tag" style="margin-left:8px;">${s.kind.replace('_', ' ')}</span>
+                            <span class="tag ${s.side === 'long' ? 'support' : 'resistance'}" style="margin-left:4px;">${s.side.toUpperCase()}</span>
+                        </div>
+                        <div class="row-right muted">
+                            entry <strong class="ok">${fmt(s.entry)}</strong>
+                            SL <strong class="bad">${fmt(s.stop)}</strong>
+                            TP <strong class="ok">${fmt(s.take_profit)}</strong>
+                            R:R <strong>${s.rr.toFixed(2)}</strong>
+                        </div>
+                    </div>
+                    <div class="muted" style="margin-top:6px;font-size:12px;">${s.reason}</div>
+                `;
+                el.appendChild(row);
+            }
+        }
+
+        function renderLevels(data) {
+            const title = document.getElementById('levels-title');
+            const el = document.getElementById('levels');
+            if (!data) { el.innerHTML = '<div class="empty">—</div>'; return; }
+            title.textContent = `Detected levels — ${data.symbol} (last close ${fmt(data.last_close)})`;
+            const rows = data.levels_exec.map(lv => `
+                <tr>
+                    <td class="num">${fmt(lv.price)}</td>
+                    <td><span class="tag ${lv.kind}">${lv.kind}</span></td>
+                    <td class="num">${lv.touches}</td>
+                    <td class="num">${lv.score.toFixed(2)}</td>
+                    <td>${lv.htf_confirmed ? '<span class="tag htf">4H</span>' : ''}</td>
+                </tr>
+            `).join('');
+            const sup = data.support ? `<span class="tag support">support ${fmt(data.support.price)}</span>` : '';
+            const res = data.resistance ? `<span class="tag resistance">resistance ${fmt(data.resistance.price)}</span>` : '';
+            el.innerHTML = `
+                <div class="body" style="display:flex;gap:8px;">${sup} ${res}</div>
+                <table>
+                    <thead><tr><th class="num">price</th><th>kind</th><th class="num">touches</th><th class="num">score</th><th>HTF</th></tr></thead>
+                    <tbody>${rows || '<tr><td colspan="5" class="empty">no levels</td></tr>'}</tbody>
+                </table>
+            `;
+        }
+
+        function renderTrades(trades) {
+            const el = document.getElementById('trades');
+            if (!trades || !trades.length) {
+                el.innerHTML = '<div class="empty">no trades logged yet (run <code>level-trader run</code> to populate)</div>';
+                return;
+            }
+            const rows = trades.slice(-50).reverse().map(t => {
+                const pnlCls = (t.realized_pnl || 0) >= 0 ? 'ok' : 'bad';
+                return `
+                    <tr>
+                        <td>${t.symbol}</td>
+                        <td><span class="tag ${t.side === 'long' ? 'support' : 'resistance'}">${t.side}</span></td>
+                        <td class="num">${fmt(t.entry)}</td>
+                        <td class="num">${fmt(t.close_price)}</td>
+                        <td class="num ${pnlCls}">${(t.realized_pnl || 0).toFixed(2)}</td>
+                        <td class="muted">${t.close_reason || ''}</td>
+                    </tr>
+                `;
+            }).join('');
+            el.innerHTML = `
+                <table>
+                    <thead><tr><th>symbol</th><th>side</th><th class="num">entry</th><th class="num">exit</th><th class="num">pnl</th><th>reason</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            `;
+        }
+
+        async function refreshLevels(symbol) {
+            try {
+                const data = await load('/api/levels/' + encodeURIComponent(symbol));
+                renderLevels(data);
+            } catch (e) {
+                document.getElementById('levels').innerHTML = '<div class="empty bad">' + e.message + '</div>';
+            }
+        }
+
+        async function refreshAll() {
+            try {
+                const u = await load('/api/universe');
+                renderUniverse(u.symbols);
+                const s = await load('/api/signals');
+                renderSignals(s.signals);
+                if (selected) await refreshLevels(selected);
+                const t = await load('/api/trades');
+                renderTrades(t.trades);
+                document.getElementById('trade-count').textContent = t.count;
+                const eq = await load('/api/equity');
+                if (eq.equity && eq.equity.length) {
+                    document.getElementById('equity-value').textContent = fmt(eq.equity[eq.equity.length - 1].equity, 6);
+                } else {
+                    document.getElementById('equity-value').textContent = '—';
+                }
+                const closed = (t.trades || []).filter(x => x.closed);
+                if (closed.length) {
+                    const wins = closed.filter(x => (x.realized_pnl || 0) > 0).length;
+                    document.getElementById('winrate').textContent = fmtPct(wins / closed.length);
+                } else {
+                    document.getElementById('winrate').textContent = '—';
+                }
+                document.getElementById('updated-at').textContent = 'updated ' + new Date().toLocaleTimeString();
+            } catch (e) {
+                document.getElementById('updated-at').textContent = 'error: ' + e.message;
+            }
+        }
+
+        refreshAll();
+        setInterval(refreshAll, 30_000);
+    </script>
+</body>
+</html>

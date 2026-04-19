@@ -7,15 +7,19 @@ requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.10",
     "ccxt>=4.4",
+    "fastapi>=0.136.0",
+    "jinja2>=3.1.6",
     "numpy>=2.0",
     "pandas>=2.2",
     "pydantic>=2.8",
     "pyyaml>=6.0",
     "rich>=13.0",
+    "uvicorn>=0.44.0",
 ]
 
 [project.scripts]
 level-trader = "level_trader.cli:main"
+level-trader-web = "level_trader.web.app:app"
 
 [build-system]
 requires = ["hatchling"]
