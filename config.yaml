@@ -73,3 +73,5 @@ logging:
   level: INFO
   trade_log: "runs/trades.jsonl"
   equity_log: "runs/equity.jsonl"
+  # Live snapshot (open positions + unrealized PnL) written each loop; read by the dashboard.
+  state_file: "runs/state.json"

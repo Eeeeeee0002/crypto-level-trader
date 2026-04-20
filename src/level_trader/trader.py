@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from .broker.base import Broker, Position
 from .config import Config
@@ -32,9 +32,16 @@ class Trader:
         self.exchange = exchange
         self.broker = broker
         self.config = config
-        self.journal = Journal(config.logging.trade_log, config.logging.equity_log)
+        self.journal = Journal(
+            config.logging.trade_log,
+            config.logging.equity_log,
+            state_file=config.logging.state_file,
+        )
         self.state: dict[str, SymbolState] = {}
         self.symbols: list[str] = []
+        self._last_prices: dict[str, float] = {}
+        self._started_at: float = time.time()
+        self._starting_equity: float = float(self.broker.equity())
 
     # -- Bootstrapping -----------------------------------------------------
 
@@ -154,12 +161,60 @@ class Trader:
             t = tickers.get(p.symbol)
             if t is None:
                 continue
+            self._last_prices[p.symbol] = t.last
             closed = self.broker.on_price(p.symbol, t.last, time.time())
             for cp in closed:
                 self.journal.record_trade(cp)
                 st = self.state.get(cp.symbol)
                 if st is not None:
                     st.last_trade_close_bar = 10**9  # force cooldown reset on next bar tick
+
+    def _snapshot_state(self) -> None:
+        """Write a JSON snapshot of open positions + equity for the dashboard."""
+        open_positions = self.broker.open_positions()
+        unrealized = 0.0
+        positions_payload: list[dict] = []
+        for p in open_positions:
+            price = self._last_prices.get(p.symbol)
+            if price is not None:
+                if p.side == "long":
+                    pnl = (price - p.entry) * p.quantity
+                else:
+                    pnl = (p.entry - price) * p.quantity
+                unrealized += pnl
+                pnl_pct = ((price / p.entry - 1.0) if p.side == "long" else (p.entry / price - 1.0))
+            else:
+                pnl = 0.0
+                pnl_pct = 0.0
+            d = asdict(p)
+            d["current_price"] = price
+            d["unrealized_pnl"] = pnl
+            d["unrealized_pnl_pct"] = pnl_pct
+            positions_payload.append(d)
+
+        closed = []
+        if hasattr(self.broker, "closed_positions"):
+            closed = list(self.broker.closed_positions())  # type: ignore[attr-defined]
+        summary = summarize(closed + list(open_positions))
+        equity = float(self.broker.equity())
+        state = {
+            "ts": time.time(),
+            "started_at": self._started_at,
+            "starting_equity": self._starting_equity,
+            "equity": equity,
+            "unrealized_pnl": unrealized,
+            "realized_pnl": equity - self._starting_equity,
+            "total_pnl": (equity - self._starting_equity) + unrealized,
+            "open_positions": positions_payload,
+            "num_open": len(open_positions),
+            "summary": summary,
+            "symbols": list(self.symbols),
+            "mode": self.config.broker.mode,
+        }
+        try:
+            self.journal.record_state(state)
+        except Exception as e:  # noqa: BLE001
+            log.warning("failed to write state snapshot: %s", e)
 
     # -- Main loop ---------------------------------------------------------
 
@@ -171,7 +226,11 @@ class Trader:
                 log.info("SIGNAL %s %s %s @ %.6g rr=%.2f — %s",
                          sig.symbol, sig.kind, sig.side, sig.entry, sig.rr, sig.reason)
                 self._maybe_open(sig)
-        self.journal.record_equity(time.time(), self.broker.equity())
+        unrealized = 0.0
+        if hasattr(self.broker, "unrealized_pnl"):
+            unrealized = self.broker.unrealized_pnl(self._last_prices)  # type: ignore[attr-defined]
+        self.journal.record_equity(time.time(), self.broker.equity(), unrealized=unrealized)
+        self._snapshot_state()
 
     def run(self, max_iterations: int | None = None) -> dict:
         """Run the agent until stopped (or `max_iterations` steps have passed)."""

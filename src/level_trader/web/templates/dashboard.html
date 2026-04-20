@@ -120,11 +120,32 @@
                     <div class="stat"><div class="label">Trades</div><div class="value" id="trade-count">—</div></div>
                     <div class="stat"><div class="label">Winrate</div><div class="value" id="winrate">—</div></div>
                 </div>
+                <div style="padding: 0 14px 14px 14px;">
+                    <svg id="equity-spark" viewBox="0 0 300 60" preserveAspectRatio="none"
+                         style="width:100%;height:60px;background:var(--panel-2);border-radius:4px;"></svg>
+                </div>
             </div>
         </div>
 
         <div>
             <div class="panel">
+                <h2>Live state</h2>
+                <div class="stats" id="live-stats">
+                    <div class="stat"><div class="label">Status</div><div class="value" id="live-status">—</div></div>
+                    <div class="stat"><div class="label">Equity</div><div class="value" id="live-equity">—</div></div>
+                    <div class="stat"><div class="label">Total PnL</div><div class="value" id="total-pnl">—</div></div>
+                    <div class="stat"><div class="label">Realized</div><div class="value" id="realized-pnl">—</div></div>
+                    <div class="stat"><div class="label">Unrealized</div><div class="value" id="unrealized-pnl">—</div></div>
+                    <div class="stat"><div class="label">Open positions</div><div class="value" id="open-count">—</div></div>
+                </div>
+            </div>
+
+            <div class="panel" style="margin-top: 16px;">
+                <h2>Open positions (live PnL)</h2>
+                <div id="positions"><div class="empty">no open positions — the bot is waiting for a valid setup</div></div>
+            </div>
+
+            <div class="panel" style="margin-top: 16px;">
                 <h2>Active signals (across universe)</h2>
                 <div id="signals"><div class="empty loading">scanning…</div></div>
             </div>
@@ -136,7 +157,7 @@
 
             <div class="panel" style="margin-top: 16px;">
                 <h2>Recent paper trades</h2>
-                <div id="trades"><div class="empty">no trades logged yet (run <code>level-trader run</code> to populate)</div></div>
+                <div id="trades"><div class="empty">no trades logged yet (run <code>level-trader start</code> to populate)</div></div>
             </div>
         </div>
     </div>
@@ -263,6 +284,86 @@
             }
         }
 
+        function renderPositions(positions) {
+            const el = document.getElementById('positions');
+            if (!positions || !positions.length) {
+                el.innerHTML = '<div class="empty">no open positions — the bot is waiting for a valid setup</div>';
+                return;
+            }
+            const rows = positions.map(p => {
+                const pnlCls = (p.unrealized_pnl || 0) >= 0 ? 'ok' : 'bad';
+                const pct = (p.unrealized_pnl_pct || 0) * 100;
+                return `
+                    <tr>
+                        <td>${p.symbol}</td>
+                        <td><span class="tag ${p.side === 'long' ? 'support' : 'resistance'}">${p.side}</span></td>
+                        <td class="num">${fmt(p.quantity)}</td>
+                        <td class="num">${fmt(p.entry)}</td>
+                        <td class="num">${fmt(p.current_price)}</td>
+                        <td class="num ${pnlCls}">${(p.unrealized_pnl || 0).toFixed(2)}</td>
+                        <td class="num ${pnlCls}">${pct.toFixed(2)}%</td>
+                        <td class="num bad">${fmt(p.stop)}</td>
+                        <td class="num ok">${fmt(p.take_profit)}</td>
+                    </tr>
+                `;
+            }).join('');
+            el.innerHTML = `
+                <table>
+                    <thead><tr>
+                        <th>symbol</th><th>side</th><th class="num">qty</th>
+                        <th class="num">entry</th><th class="num">current</th>
+                        <th class="num">pnl $</th><th class="num">pnl %</th>
+                        <th class="num">SL</th><th class="num">TP</th>
+                    </tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            `;
+        }
+
+        function renderLiveStats(state) {
+            const setText = (id, text, cls) => {
+                const el = document.getElementById(id);
+                el.textContent = text;
+                el.className = 'value' + (cls ? (' ' + cls) : '');
+            };
+            const running = state && state.running;
+            setText('live-status', running ? 'running' : 'idle', running ? 'ok' : 'muted');
+            if (!state || state.equity === undefined) {
+                ['live-equity','total-pnl','realized-pnl','unrealized-pnl','open-count']
+                    .forEach(id => setText(id, '—'));
+                return;
+            }
+            setText('live-equity', state.equity.toFixed(2));
+            const fmtSigned = (n) => (n >= 0 ? '+' : '') + n.toFixed(2);
+            const cls = (n) => n >= 0 ? 'ok' : 'bad';
+            setText('total-pnl', fmtSigned(state.total_pnl || 0), cls(state.total_pnl || 0));
+            setText('realized-pnl', fmtSigned(state.realized_pnl || 0), cls(state.realized_pnl || 0));
+            setText('unrealized-pnl', fmtSigned(state.unrealized_pnl || 0), cls(state.unrealized_pnl || 0));
+            setText('open-count', String(state.num_open || 0));
+        }
+
+        function renderEquitySpark(samples) {
+            const svg = document.getElementById('equity-spark');
+            svg.innerHTML = '';
+            if (!samples || samples.length < 2) return;
+            const values = samples.map(s => s.equity);
+            const min = Math.min(...values);
+            const max = Math.max(...values);
+            const span = Math.max(max - min, 1e-9);
+            const n = values.length;
+            const points = values.map((v, i) => {
+                const x = (i / (n - 1)) * 300;
+                const y = 60 - ((v - min) / span) * 56 - 2;
+                return `${x.toFixed(2)},${y.toFixed(2)}`;
+            }).join(' ');
+            const last = values[values.length - 1];
+            const first = values[0];
+            const stroke = last >= first ? 'var(--accent)' : 'var(--red)';
+            svg.innerHTML = `
+                <polyline fill="none" stroke="${stroke}" stroke-width="1.5" points="${points}" />
+            `;
+        }
+
         async function refreshAll() {
             try {
                 const u = await load('/api/universe');
@@ -276,6 +377,7 @@
                 const eq = await load('/api/equity');
                 if (eq.equity && eq.equity.length) {
                     document.getElementById('equity-value').textContent = fmt(eq.equity[eq.equity.length - 1].equity, 6);
+                    renderEquitySpark(eq.equity);
                 } else {
                     document.getElementById('equity-value').textContent = '—';
                 }
@@ -286,6 +388,13 @@
                 } else {
                     document.getElementById('winrate').textContent = '—';
                 }
+                try {
+                    const state = await load('/api/state');
+                    renderLiveStats(state);
+                    renderPositions(state.open_positions || []);
+                } catch (e) {
+                    renderLiveStats(null);
+                }
                 document.getElementById('updated-at').textContent = 'updated ' + new Date().toLocaleTimeString();
             } catch (e) {
                 document.getElementById('updated-at').textContent = 'error: ' + e.message;
@@ -293,7 +402,7 @@
         }
 
         refreshAll();
-        setInterval(refreshAll, 30_000);
+        setInterval(refreshAll, 10_000);
     </script>
 </body>
 </html>

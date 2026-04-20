@@ -196,6 +196,27 @@ def api_equity() -> dict:
     return {"equity": rows, "count": len(rows)}
 
 
+@app.get("/api/state")
+def api_state() -> dict:
+    """Live snapshot of open positions, PnL, and equity written by the trader loop."""
+    cfg = _config()
+    path = Path(cfg.logging.state_file)
+    if not path.exists():
+        return {
+            "running": False,
+            "message": (
+                "no live state yet — start the trader with "
+                "`level-trader start` (or `level-trader run`) in paper mode"
+            ),
+        }
+    try:
+        data = json.loads(path.read_text())
+    except Exception as e:  # noqa: BLE001
+        return {"running": False, "error": f"failed to read state: {e}"}
+    data["running"] = (time.time() - float(data.get("ts", 0))) < 180
+    return data
+
+
 @app.get("/api/healthz")
 def healthz() -> dict:
     return {"ok": True, "exchange": "gate", "ts": time.time()}

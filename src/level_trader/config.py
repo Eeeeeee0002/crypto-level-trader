@@ -69,6 +69,7 @@ class LoggingConfig(BaseModel):
     level: str = "INFO"
     trade_log: str = "runs/trades.jsonl"
     equity_log: str = "runs/equity.jsonl"
+    state_file: str = "runs/state.json"
 
 
 class Config(BaseModel):

@@ -20,10 +20,12 @@ def _to_dict(obj: Any) -> Any:
 
 
 class Journal:
-    def __init__(self, trade_log: str, equity_log: str) -> None:
+    def __init__(self, trade_log: str, equity_log: str, state_file: str | None = None) -> None:
         self.trade_path = Path(trade_log)
         self.equity_path = Path(equity_log)
-        for p in (self.trade_path, self.equity_path):
+        # Default the live-state snapshot next to the equity log.
+        self.state_path = Path(state_file) if state_file else self.equity_path.parent / "state.json"
+        for p in (self.trade_path, self.equity_path, self.state_path):
             p.parent.mkdir(parents=True, exist_ok=True)
 
     def record_trade(self, pos: Position) -> None:
@@ -33,6 +35,12 @@ class Journal:
     def record_equity(self, ts: float, equity: float, unrealized: float = 0.0) -> None:
         with self.equity_path.open("a") as f:
             f.write(json.dumps({"ts": ts, "equity": equity, "unrealized": unrealized}) + "\n")
+
+    def record_state(self, state: dict[str, Any]) -> None:
+        """Atomically snapshot the current trader state for the dashboard."""
+        tmp = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
+        tmp.write_text(json.dumps(state, default=str, indent=2))
+        tmp.replace(self.state_path)
 
 
 def summarize(positions: list[Position]) -> dict[str, float]:
