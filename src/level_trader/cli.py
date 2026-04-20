@@ -103,6 +103,59 @@ def _cmd_universe(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_web(args: argparse.Namespace) -> int:
+    """Serve the dashboard only (reads state written by a separately-running trader)."""
+    import uvicorn
+
+    os.environ.setdefault("LEVEL_TRADER_CONFIG", str(args.config))
+    uvicorn.run(
+        "level_trader.web.app:app",
+        host=args.host,
+        port=args.port,
+        log_level=args.log_level,
+        reload=False,
+    )
+    return 0
+
+
+def _cmd_start(args: argparse.Namespace) -> int:
+    """Run the trader and the FastAPI dashboard together in one process."""
+    import threading
+
+    import uvicorn
+
+    cfg = Config.load(args.config)
+    _setup_logging(cfg.logging.level)
+    exchange = _build_exchange(cfg, want_live=args.live)
+    broker = _build_broker(cfg, exchange, want_live=args.live)
+    trader = Trader(exchange, broker, cfg)
+
+    os.environ.setdefault("LEVEL_TRADER_CONFIG", str(args.config))
+
+    def _trade_loop() -> None:
+        try:
+            trader.run(max_iterations=args.iterations)
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).exception("Trader loop crashed")
+
+    t = threading.Thread(target=_trade_loop, name="trader", daemon=True)
+    t.start()
+
+    config = uvicorn.Config(
+        "level_trader.web.app:app",
+        host=args.host,
+        port=args.port,
+        log_level=args.log_level,
+        reload=False,
+    )
+    server = uvicorn.Server(config)
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
 def _cmd_report(args: argparse.Namespace) -> int:
     path = Path(args.trade_log)
     if not path.exists():
@@ -147,6 +200,20 @@ def main(argv: list[str] | None = None) -> int:
     p_r = sub.add_parser("report", help="summarize a run from the trade log")
     p_r.add_argument("--trade-log", default="runs/trades.jsonl")
     p_r.set_defaults(func=_cmd_report)
+
+    p_w = sub.add_parser("web", help="run the FastAPI dashboard (no trader)")
+    p_w.add_argument("--host", default="0.0.0.0")
+    p_w.add_argument("--port", type=int, default=8787)
+    p_w.add_argument("--log-level", default="info")
+    p_w.set_defaults(func=_cmd_web)
+
+    p_s = sub.add_parser("start", help="run trader + dashboard together (paper by default)")
+    p_s.add_argument("--live", action="store_true", help="use live Gate broker (requires API keys)")
+    p_s.add_argument("--iterations", type=int, default=None)
+    p_s.add_argument("--host", default="0.0.0.0")
+    p_s.add_argument("--port", type=int, default=8787)
+    p_s.add_argument("--log-level", default="info")
+    p_s.set_defaults(func=_cmd_start)
 
     args = parser.parse_args(argv)
     return args.func(args)

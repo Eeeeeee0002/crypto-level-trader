@@ -26,6 +26,21 @@ uv run level-trader --config config.yaml report           # summarize runs/trade
 
 To stop early for a bounded test run, use `--iterations N`.
 
+### Web dashboard
+
+To run the trader and the FastAPI dashboard together (paper mode, real market data):
+
+```bash
+uv run level-trader --config config.yaml start --host 0.0.0.0 --port 8787
+```
+
+Then open http://localhost:8787 to watch open positions, live unrealized PnL,
+realized PnL, equity, and the trade log in real time. The dashboard reads a
+JSON snapshot the trader writes every loop (`runs/state.json`).
+
+If you want the dashboard in a separate process, use `level-trader web` (serves
+the UI only and reads the same state file).
+
 ## Going live (when you're ready)
 
 1. Create API keys on Gate with futures trading permission.

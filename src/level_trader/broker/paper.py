@@ -38,6 +38,24 @@ class PaperBroker(Broker):
 
     # -- Order flow ---------------------------------------------------------
 
+    def unrealized_pnl(self, prices: dict[str, float]) -> float:
+        """Mark-to-market unrealized PnL across all open positions.
+
+        ``prices`` maps symbol -> last price. Missing symbols contribute 0.
+        """
+        total = 0.0
+        for pos in self._positions.values():
+            if pos.closed:
+                continue
+            price = prices.get(pos.symbol)
+            if price is None:
+                continue
+            if pos.side == "long":
+                total += (price - pos.entry) * pos.quantity
+            else:
+                total += (pos.entry - price) * pos.quantity
+        return total
+
     def _fill_price(self, side: Side, ref: float, is_entry: bool) -> float:
         """Apply slippage.
 
