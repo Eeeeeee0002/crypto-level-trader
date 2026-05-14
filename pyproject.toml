@@ -20,13 +20,14 @@ dependencies = [
 [project.scripts]
 level-trader = "level_trader.cli:main"
 level-trader-web = "level_trader.web.app:app"
+weather-agent = "weather_agent.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/level_trader"]
+packages = ["src/level_trader", "src/weather_agent"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
