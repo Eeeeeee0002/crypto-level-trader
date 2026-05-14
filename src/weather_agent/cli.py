@@ -13,7 +13,8 @@ from rich.table import Table
 from weather_agent.agent import run_scan
 from weather_agent.strategy import BetSignal
 
-console = Console()
+console = Console(stderr=True)
+stdout_console = Console()
 
 
 def _render_table(signals: list[BetSignal], top_n: int = 30) -> None:
@@ -67,7 +68,7 @@ def _render_table(signals: list[BetSignal], top_n: int = 30) -> None:
             f"{sig.forecast_temp:.1f}",
         )
 
-    console.print(table)
+    stdout_console.print(table)
 
 
 def _render_json(signals: list[BetSignal], top_n: int = 30) -> None:
