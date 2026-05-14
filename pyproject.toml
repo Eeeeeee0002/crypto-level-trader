@@ -21,6 +21,7 @@ dependencies = [
 level-trader = "level_trader.cli:main"
 level-trader-web = "level_trader.web.app:app"
 weather-agent = "weather_agent.cli:main"
+weather-dashboard = "weather_agent.dashboard_cli:main"
 
 [build-system]
 requires = ["hatchling"]
