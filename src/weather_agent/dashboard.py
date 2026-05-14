@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from threading import Thread
@@ -183,7 +182,7 @@ async def _refresh() -> None:
 
     result = await run_scan(sigma=_sigma, min_edge=_min_edge, limit=_limit)
     signals = result.signals[:_top_n]
-    scan_time = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    scan_time = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M:%S")
     _cached_html = _build_html(signals, scan_time, result.events_scanned, result.events_with_forecast)
     _last_update = time.time()
 
@@ -210,7 +209,7 @@ class _Handler(SimpleHTTPRequestHandler):
 async def _update_loop() -> None:
     while True:
         try:
-            print(f"[dashboard] Refreshing data...")
+            print("[dashboard] Refreshing data...")
             await _refresh()
             print(f"[dashboard] Updated — {len(_cached_html)} bytes")
         except Exception as exc:
