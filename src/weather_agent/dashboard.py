@@ -8,7 +8,7 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from threading import Thread
 
 from weather_agent.agent import run_scan
-from weather_agent.strategy import BetSignal
+from weather_agent.strategy import BetSignal, filter_safe
 
 _cached_html: str = ""
 _last_update: float = 0.0
@@ -17,6 +17,7 @@ _sigma: float = 2.0
 _min_edge: float = 0.05
 _top_n: int = 50
 _limit: int = 200
+_safe_only: bool = False
 
 
 def _signal_to_dict(sig: BetSignal) -> dict:
@@ -181,7 +182,10 @@ async def _refresh() -> None:
     import datetime
 
     result = await run_scan(sigma=_sigma, min_edge=_min_edge, limit=_limit)
-    signals = result.signals[:_top_n]
+    signals = result.signals
+    if _safe_only:
+        signals = filter_safe(signals, min_prob=0.85, min_edge=0.10)
+    signals = signals[:_top_n]
     scan_time = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M:%S")
     _cached_html = _build_html(signals, scan_time, result.events_scanned, result.events_with_forecast)
     _last_update = time.time()
@@ -224,13 +228,15 @@ def serve(
     top_n: int = 50,
     limit: int = 200,
     interval: int = 300,
+    safe_only: bool = False,
 ) -> None:
-    global _sigma, _min_edge, _top_n, _limit, _update_interval
+    global _sigma, _min_edge, _top_n, _limit, _update_interval, _safe_only
     _sigma = sigma
     _min_edge = min_edge
     _top_n = top_n
     _limit = limit
     _update_interval = interval
+    _safe_only = safe_only
 
     asyncio.run(_refresh())
 

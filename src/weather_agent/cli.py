@@ -11,7 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from weather_agent.agent import run_scan
-from weather_agent.strategy import BetSignal
+from weather_agent.strategy import BetSignal, filter_safe
 
 console = Console(stderr=True)
 stdout_console = Console()
@@ -117,18 +117,29 @@ async def _main(args: argparse.Namespace) -> int:
         console.print("\n[yellow]No betting opportunities found with current edge threshold.[/]")
         return 0
 
-    high = [s for s in result.signals if s.confidence == "high"]
-    med = [s for s in result.signals if s.confidence == "medium"]
-    console.print(
-        f"\n[green]High confidence:[/] {len(high)}"
-        f"  [yellow]Medium:[/] {len(med)}"
-        f"  [dim]Low:[/] {len(result.signals) - len(high) - len(med)}"
-    )
+    signals = result.signals
+    if args.safe_only:
+        signals = filter_safe(signals, min_prob=0.85, min_edge=0.10)
+        console.print(
+            f"\n[bold green]Safe mode:[/] {len(signals)} range bets "
+            f"(≥/≤ only, prob≥85%, edge≥10%) from {len(result.signals)} total"
+        )
+        if not signals:
+            console.print("[yellow]No safe bets found right now. Try lowering --min-edge.[/]")
+            return 0
+    else:
+        high = [s for s in signals if s.confidence == "high"]
+        med = [s for s in signals if s.confidence == "medium"]
+        console.print(
+            f"\n[green]High confidence:[/] {len(high)}"
+            f"  [yellow]Medium:[/] {len(med)}"
+            f"  [dim]Low:[/] {len(signals) - len(high) - len(med)}"
+        )
 
     if args.format == "json":
-        _render_json(result.signals, top_n=args.top)
+        _render_json(signals, top_n=args.top)
     else:
-        _render_table(result.signals, top_n=args.top)
+        _render_table(signals, top_n=args.top)
 
     return 0
 
@@ -157,6 +168,10 @@ def main() -> None:
     parser.add_argument(
         "--format", choices=["table", "json"], default="table",
         help="Output format (default: table).",
+    )
+    parser.add_argument(
+        "--safe-only", action="store_true",
+        help="Show only range bets (≥/≤) with prob≥85%% and edge≥10%%. Much safer than exact-temp bets.",
     )
     args = parser.parse_args()
     sys.exit(asyncio.run(_main(args)))

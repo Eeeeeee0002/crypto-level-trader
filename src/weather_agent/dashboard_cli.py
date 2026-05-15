@@ -18,11 +18,13 @@ def main() -> None:
     parser.add_argument("--top", type=int, default=50, help="Show top N signals (default: 50)")
     parser.add_argument("--limit", type=int, default=200, help="Max events to fetch (default: 200)")
     parser.add_argument("--interval", type=int, default=300, help="Refresh interval in seconds (default: 300)")
+    parser.add_argument("--safe-only", action="store_true", help="Show only range bets (>=/<= only, prob>=85%%, edge>=10%%)")
 
     args = parser.parse_args()
 
     print(f"Starting weather dashboard on port {args.port}...")
-    print(f"Settings: sigma={args.sigma}, min-edge={args.min_edge}%, top={args.top}, refresh={args.interval}s")
+    mode = "SAFE (range bets only)" if args.safe_only else "ALL signals"
+    print(f"Settings: sigma={args.sigma}, min-edge={args.min_edge}%, top={args.top}, refresh={args.interval}s, mode={mode}")
 
     serve(
         port=args.port,
@@ -31,6 +33,7 @@ def main() -> None:
         top_n=args.top,
         limit=args.limit,
         interval=args.interval,
+        safe_only=args.safe_only,
     )
 
 

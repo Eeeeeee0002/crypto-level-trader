@@ -28,6 +28,11 @@ class BetSignal:
     bucket_temp_low: float | None
     bucket_temp_high: float | None
 
+    @property
+    def is_range_bet(self) -> bool:
+        """True for boundary buckets (≥X or ≤X) — safer than exact-temp buckets."""
+        return self.bucket_temp_low is None or self.bucket_temp_high is None
+
 
 def _normal_pdf(x: float, mu: float, sigma: float) -> float:
     """Standard normal PDF."""
@@ -154,3 +159,22 @@ def analyze_event(
 
     signals.sort(key=lambda s: s.expected_value, reverse=True)
     return signals
+
+
+def filter_safe(
+    signals: list[BetSignal],
+    *,
+    min_prob: float = 0.85,
+    min_edge: float = 0.10,
+) -> list[BetSignal]:
+    """Keep only range bets (≥/≤) with high probability and edge.
+
+    These are far more reliable than exact-temperature buckets because
+    a small forecast error still lands on the winning side.
+    """
+    return [
+        s for s in signals
+        if s.is_range_bet
+        and s.estimated_probability >= min_prob
+        and s.edge >= min_edge
+    ]
