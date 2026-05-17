@@ -24,6 +24,7 @@ weather-agent = "weather_agent.cli:main"
 weather-dashboard = "weather_agent.dashboard_cli:main"
 weather-paper-trade = "weather_agent.paper_cli:main"
 weather-arb = "weather_agent.arb_cli:main"
+weather-arb-trade = "weather_agent.arb_paper_cli:main"
 
 [build-system]
 requires = ["hatchling"]
