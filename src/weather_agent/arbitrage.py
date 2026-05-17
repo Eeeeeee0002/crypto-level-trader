@@ -1,22 +1,94 @@
 """Polymarket arbitrage scanner.
 
-Scans multi-outcome events where exactly one outcome wins.
-If sum(YES prices) < 1.0, buying YES on every bucket guarantees a profit.
-If sum(YES prices) > 1.0, buying NO on every bucket guarantees a profit.
+Scans ALL multi-outcome events for mispricing.
+For truly mutually exclusive events (exactly one outcome wins),
+if sum(YES prices) < 1.0, buying YES on every bucket guarantees profit.
 
-Temperature markets are ideal: the temperature falls in exactly one bucket,
-so these are truly mutually exclusive outcomes.
+IMPORTANT: Only works on mutually exclusive events. The scanner
+auto-detects exclusivity by checking question patterns:
+  ✅ Temperature buckets, exact count ranges, "or below"/"or above"
+  ❌ Cumulative ("reach at least X"), multi-winner ("which clubs")
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass, field
 
 import aiohttp
 
 GAMMA_BASE = "https://gamma-api.polymarket.com"
+
+# Patterns in questions that indicate CUMULATIVE (not exclusive) outcomes
+_CUMULATIVE_Q = re.compile(
+    r"reach|at least|hit \d|go above|go below|"
+    r"fdv above|cap above|above ___",
+    re.IGNORECASE,
+)
+
+# Patterns in event titles that indicate multi-winner (not exclusive)
+_MULTI_WINNER_TITLE = re.compile(
+    r"which clubs|which ceo|who will attend|which artist|"
+    r"who visited|who will testify|which compan|which maps|"
+    r"who will .* purge|which country will join|"
+    r"will .* launch a token by|by \.\.\.|by ___",
+    re.IGNORECASE,
+)
+
+# Patterns in questions that indicate exclusive range buckets
+_EXCLUSIVE_Q = re.compile(
+    r"between|less than|or more|or higher|or fewer|"
+    r"or lower|or below|or above|will .* be \d",
+    re.IGNORECASE,
+)
+
+
+def _is_mutually_exclusive(title: str, questions: list[str]) -> bool:
+    """Heuristic: is this event truly mutually exclusive (exactly 1 wins)?"""
+    if _MULTI_WINNER_TITLE.search(title):
+        return False
+
+    # Check if questions have cumulative patterns
+    cumulative_count = sum(1 for q in questions if _CUMULATIVE_Q.search(q))
+    if cumulative_count > len(questions) * 0.3:
+        return False
+
+    # Temperature markets are always exclusive
+    if "temperature" in title.lower():
+        return True
+
+    # Range/bucket patterns indicate exclusivity
+    range_count = sum(1 for q in questions if _EXCLUSIVE_Q.search(q))
+    if range_count >= len(questions) * 0.5:
+        return True
+
+    # "How many X" with count buckets
+    if re.search(r"how many", title, re.IGNORECASE):
+        return True
+
+    # Single-winner events: "winner", "MVP", "nominee"
+    if re.search(r"winner|mvp|nominee|next .* (actor|director)", title, re.IGNORECASE):
+        return True
+
+    # IPO closing market cap (range buckets)
+    if re.search(r"closing market cap|ipo.*cap", title, re.IGNORECASE):
+        return True
+
+    # Turnout percentages (range buckets)
+    if "turnout" in title.lower():
+        return True
+
+    # Exchange rate (range buckets)
+    if "exchange rate" in title.lower():
+        return True
+
+    # Earthquake counts
+    if "earthquake" in title.lower():
+        return True
+
+    return False
 
 
 @dataclass
@@ -40,82 +112,49 @@ class ArbOpportunity:
     sum_yes: float
     gap: float  # 1.0 - sum_yes (positive = buy all YES)
     gap_pct: float
-    direction: str  # "BUY ALL YES" or "BUY ALL NO"
-    cost_per_share: float  # total cost to buy 1 share of each outcome
-    guaranteed_payout: float  # $1 for YES arb, $(N-1) for NO arb
-    profit_per_dollar: float  # guaranteed_payout / cost - 1
+    direction: str  # "BUY ALL YES"
+    cost_per_share: float
+    guaranteed_payout: float  # $1 for YES arb
+    profit_per_dollar: float
     buckets: list[ArbBucket] = field(default_factory=list)
 
     def calc_trade(self, total_stake: float) -> dict:
         """Calculate exact trade: how much to spend on each bucket."""
-        if self.direction == "BUY ALL YES":
-            # Buy YES on every bucket, total cost = sum_yes per "set"
-            sets = total_stake / self.sum_yes
-            trades = []
-            for b in self.buckets:
-                spend = b.yes_price * sets
-                shares = sets  # 1 share per set per bucket
-                trades.append({
-                    "question": b.question[:60],
-                    "market_id": b.market_id,
-                    "side": "YES",
-                    "price": b.yes_price,
-                    "spend": round(spend, 4),
-                    "shares": round(shares, 4),
-                })
-            payout = sets * 1.0
-            profit = payout - total_stake
-            return {
-                "total_stake": round(total_stake, 2),
-                "sets": round(sets, 4),
-                "guaranteed_payout": round(payout, 2),
-                "guaranteed_profit": round(profit, 2),
-                "profit_pct": round(profit / total_stake * 100, 2),
-                "trades": trades,
-            }
-        else:
-            # BUY ALL NO
-            total_no = sum(b.no_price for b in self.buckets)
-            sets = total_stake / total_no
-            trades = []
-            for b in self.buckets:
-                spend = b.no_price * sets
-                trades.append({
-                    "question": b.question[:60],
-                    "market_id": b.market_id,
-                    "side": "NO",
-                    "price": b.no_price,
-                    "spend": round(spend, 4),
-                    "shares": round(sets, 4),
-                })
-            payout = (len(self.buckets) - 1) * sets
-            profit = payout - total_stake
-            return {
-                "total_stake": round(total_stake, 2),
-                "sets": round(sets, 4),
-                "guaranteed_payout": round(payout, 2),
-                "guaranteed_profit": round(profit, 2),
-                "profit_pct": round(profit / total_stake * 100, 2),
-                "trades": trades,
-            }
+        sets = total_stake / self.sum_yes
+        trades = []
+        for b in self.buckets:
+            spend = b.yes_price * sets
+            trades.append({
+                "question": b.question[:70],
+                "market_id": b.market_id,
+                "side": "YES",
+                "price": b.yes_price,
+                "spend": round(spend, 4),
+                "shares": round(sets, 4),
+            })
+        payout = sets * 1.0
+        profit = payout - total_stake
+        return {
+            "total_stake": round(total_stake, 2),
+            "sets": round(sets, 4),
+            "guaranteed_payout": round(payout, 2),
+            "guaranteed_profit": round(profit, 2),
+            "profit_pct": round(profit / total_stake * 100, 2),
+            "trades": trades,
+        }
 
 
 async def scan_arbitrage(
     *,
     tag_slug: str | None = None,
     min_gap_pct: float = 1.0,
-    limit: int = 200,
+    limit: int = 100,
+    max_pages: int = 20,
 ) -> list[ArbOpportunity]:
-    """Scan Polymarket for arbitrage opportunities.
+    """Scan Polymarket for arbitrage on mutually exclusive events.
 
-    Parameters
-    ----------
-    tag_slug : str or None
-        Filter to specific tag (e.g. "daily-temperature"). None = all events.
-    min_gap_pct : float
-        Minimum gap in percent to report (default 1%).
-    limit : int
-        Max events to fetch per API call.
+    Only returns BUY ALL YES opportunities where sum(YES) < 1.0
+    on verified mutually exclusive multi-outcome events.
     """
     url = f"{GAMMA_BASE}/events"
     params: dict[str, str | int] = {
@@ -127,9 +166,8 @@ async def scan_arbitrage(
 
     all_events: list[dict] = []
     async with aiohttp.ClientSession() as session:
-        # Fetch multiple pages
-        for offset in range(0, 1000, limit):
-            p = {**params, "offset": offset}
+        for page in range(max_pages):
+            p = {**params, "offset": page * limit}
             async with session.get(url, params=p) as resp:
                 if resp.status != 200:
                     break
@@ -137,7 +175,7 @@ async def scan_arbitrage(
                 if not batch:
                     break
                 all_events.extend(batch)
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.2)
 
     opportunities: list[ArbOpportunity] = []
 
@@ -145,6 +183,12 @@ async def scan_arbitrage(
         markets = ev.get("markets", [])
         active = [m for m in markets if not m.get("closed", False)]
         if len(active) < 3:
+            continue
+
+        title = ev.get("title", "")
+        questions = [m.get("question", "") for m in active]
+
+        if not _is_mutually_exclusive(title, questions):
             continue
 
         buckets: list[ArbBucket] = []
@@ -164,48 +208,30 @@ async def scan_arbitrage(
             ))
 
         sum_yes = sum(b.yes_price for b in buckets)
-        sum_no = sum(b.no_price for b in buckets)
 
-        # BUY ALL YES arb: cost = sum_yes, payout = $1
-        if sum_yes < 1.0:
-            gap = 1.0 - sum_yes
-            gap_pct = gap * 100
-            if gap_pct >= min_gap_pct:
-                opportunities.append(ArbOpportunity(
-                    event_title=ev.get("title", ""),
-                    event_id=str(ev.get("id", "")),
-                    slug=ev.get("slug", ""),
-                    num_buckets=len(buckets),
-                    sum_yes=round(sum_yes, 4),
-                    gap=round(gap, 4),
-                    gap_pct=round(gap_pct, 2),
-                    direction="BUY ALL YES",
-                    cost_per_share=round(sum_yes, 4),
-                    guaranteed_payout=1.0,
-                    profit_per_dollar=round(gap / sum_yes, 4) if sum_yes > 0 else 0,
-                    buckets=buckets,
-                ))
+        if sum_yes >= 1.0 or sum_yes < 0.3:
+            continue
 
-        # BUY ALL NO arb: cost = sum_no, payout = $(N-1)
-        expected_no_payout = len(buckets) - 1
-        if sum_no < expected_no_payout:
-            gap = expected_no_payout - sum_no
-            gap_pct = gap / sum_no * 100 if sum_no > 0 else 0
-            if gap_pct >= min_gap_pct:
-                opportunities.append(ArbOpportunity(
-                    event_title=ev.get("title", ""),
-                    event_id=str(ev.get("id", "")),
-                    slug=ev.get("slug", ""),
-                    num_buckets=len(buckets),
-                    sum_yes=round(sum_yes, 4),
-                    gap=round(gap, 4),
-                    gap_pct=round(gap_pct, 2),
-                    direction="BUY ALL NO",
-                    cost_per_share=round(sum_no, 4),
-                    guaranteed_payout=float(expected_no_payout),
-                    profit_per_dollar=round(gap / sum_no, 4) if sum_no > 0 else 0,
-                    buckets=buckets,
-                ))
+        gap = 1.0 - sum_yes
+        gap_pct = gap * 100
+
+        if gap_pct < min_gap_pct:
+            continue
+
+        opportunities.append(ArbOpportunity(
+            event_title=title,
+            event_id=str(ev.get("id", "")),
+            slug=ev.get("slug", ""),
+            num_buckets=len(buckets),
+            sum_yes=round(sum_yes, 4),
+            gap=round(gap, 4),
+            gap_pct=round(gap_pct, 2),
+            direction="BUY ALL YES",
+            cost_per_share=round(sum_yes, 4),
+            guaranteed_payout=1.0,
+            profit_per_dollar=round(gap / sum_yes, 4) if sum_yes > 0 else 0,
+            buckets=buckets,
+        ))
 
     opportunities.sort(key=lambda x: -x.gap_pct)
     return opportunities
