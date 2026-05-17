@@ -72,6 +72,59 @@ src/level_trader/
   cli.py                 # CLI entrypoint
 ```
 
+---
+
+## Weather Betting Agent (Polymarket)
+
+A separate agent that tracks **daily temperature prediction markets** on [Polymarket](https://polymarket.com/predictions/daily-temperature), compares market odds with real weather forecasts from [Open-Meteo](https://open-meteo.com), and recommends bets where the market misprices the actual weather probability.
+
+### How it works
+
+1. **Market scan** — fetches active "Highest/Lowest temperature in [City] on [Date]?" events from the Polymarket Gamma API. Each event has ~11 temperature buckets (e.g. "Will the highest temperature in London be 12°C on May 14?").
+2. **Forecast fetch** — for each city, gets the real forecast (max/min daily temperature) from Open-Meteo's free API (no API key needed).
+3. **Probability estimation** — models the actual temperature as a normal distribution centered on the forecast with configurable uncertainty (σ). Computes the probability of each bucket.
+4. **Edge detection** — compares estimated probability with market price. Signals where `estimated_prob - market_price > min_edge` are flagged as betting opportunities.
+5. **Output** — a ranked table (or JSON) of recommended bets sorted by expected value, with confidence levels (high/medium/low).
+
+### Quickstart
+
+```bash
+uv sync
+uv run weather-agent                    # scan and show top-30 signals
+uv run weather-agent --format json      # JSON output
+uv run weather-agent --min-edge 10      # only show signals with 10%+ edge
+uv run weather-agent --sigma 1.5        # tighter forecast confidence
+uv run weather-agent --top 50           # show top-50
+```
+
+### CLI options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--sigma` | 2.0 | Forecast uncertainty in °C. Lower = more confident in forecast. |
+| `--min-edge` | 5.0 | Minimum edge (%) to show a signal. |
+| `--top` | 30 | Number of top signals to display. |
+| `--limit` | 200 | Max Polymarket events to fetch. |
+| `--format` | table | Output format: `table` or `json`. |
+
+### Supported cities
+
+London, Paris, NYC, Miami, Tokyo, Hong Kong, Shanghai, Seoul, Moscow, Istanbul, Jakarta, Madrid, Amsterdam, Sao Paulo, Buenos Aires, Seattle, Los Angeles, Atlanta, Wellington, Chicago, Dallas, Denver, San Francisco, Phoenix, Sydney, Melbourne, Singapore, Dubai, Bangkok, Mumbai, Berlin, Rome.
+
+### Project layout
+
+```
+src/weather_agent/
+  cities.py         # city definitions (coords, timezone, unit)
+  polymarket.py     # Polymarket Gamma API client (fetch & parse weather events)
+  forecast.py       # Open-Meteo weather forecast client
+  strategy.py       # probability model & edge detection
+  agent.py          # orchestrator (scan → forecast → signals)
+  cli.py            # CLI entry-point
+```
+
+---
+
 ## Tests
 
 ```bash
@@ -81,4 +134,4 @@ uv run ruff check src tests
 
 ## Disclaimer
 
-No strategy prints money. This agent is transparent, testable and risk-capped; treat paper results as a sanity check, not a guarantee, and keep stops respected before going live.
+No strategy prints money. These agents are transparent, testable and risk-capped; treat results as a sanity check, not a guarantee, and keep stops respected before going live.
